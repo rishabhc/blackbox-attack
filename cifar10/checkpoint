@@ -1,2 +1,2 @@
-model_checkpoint_path: "simple-model-checkpoint"
-all_model_checkpoint_paths: "simple-model-checkpoint"
+model_checkpoint_path: "my-new-model-with-cifar"
+all_model_checkpoint_paths: "my-new-model-with-cifar"
