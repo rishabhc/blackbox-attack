@@ -35,9 +35,10 @@ from utils import keras_model_wrapper, generate_attack_inputs, \
 	compute_cw_loss, select_next_seed, mixup_data, local_attack_in_batches
 import argparse
 
-os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 def main(args):
+
+
 	if args["model_type"] == "normal":
 		load_robust = False
 	else:
@@ -57,8 +58,10 @@ def main(args):
 		print("INFO: '~/.keras/keras.json' sets 'image_dim_ordering' to "
 			"'th', temporarily setting to 'tf'")
 
+	gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.5)
+
 	# Create TF session and set as Keras backend session
-	sess = tf.Session()
+	sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
 	keras.backend.set_session(sess)
 
 	x_test, y_test = CIFAR().test_data, CIFAR().test_labels
@@ -74,7 +77,7 @@ def main(args):
 	x = tf.placeholder(tf.float32, shape=(None, image_size, image_size, num_channels))
 	y = tf.placeholder(tf.float32, shape=(None, class_num))
 	# required by the local robust densenet model
-	is_training = tf.placeholder(tf.bool, shape=[]) 
+	is_training = tf.placeholder(tf.bool, shape=[])
 	keep_prob = tf.placeholder(tf.float32)
 	########################### load the target model ##########################################
 	if not load_robust:
@@ -101,7 +104,7 @@ def main(args):
 		else:
 			raise NotImplementedError
 		corr_preds = target_model.correct_prediction(x_test,np.argmax(y_test,axis = 1))
-		print('Test accuracy of target robust model :{:.4f}'.format(np.sum(corr_preds)/len(x_test))) 
+		print('Test accuracy of target robust model :{:.4f}'.format(np.sum(corr_preds)/len(x_test)))
 	##################################### end of load target model ###################################
 	local_model_names = args["local_model_names"]
 	robust_indx = []
@@ -152,7 +155,7 @@ def main(args):
 			loc_adv = 'adv_no_tune'
 	else:
 		loc_adv = 'orig'
-	
+
 	# target type
 	if args["attack_type"] == "targeted":
 		is_targeted = True
@@ -160,25 +163,25 @@ def main(args):
 		is_targeted = False
 
 	sub_epochs = args["nb_epochs_sub"] # epcohs for local model training
-	use_loc_adv_thres = args["use_loc_adv_thres"] # threshold for transfer attack success rate, it is used when we need to start from local adversarial seeds 
+	use_loc_adv_thres = args["use_loc_adv_thres"] # threshold for transfer attack success rate, it is used when we need to start from local adversarial seeds
 	use_loc_adv_flag = True # flag for using local adversarial examples
 	fine_tune_freq = args["fine_tune_freq"] # fine-tune the model every K images to save total model training time
 
 	# store the attack input files (e.g., original image, target class)
 	input_file_prefix = os.path.join(args["local_path"],target_model_name,
 												args["attack_type"])
-	os.system("mkdir -p {}".format(input_file_prefix)) 
-	# save locally generated information 
+	os.system("mkdir {}".format(input_file_prefix))
+	# save locally generated information
 	local_info_file_prefix = os.path.join(args["local_path"],target_model_name,
 												args["attack_type"],
 												local_model_folder,str(args["seed"]))
-	os.system("mkdir -p {}".format(local_info_file_prefix)) 
+	os.system("mkdir {}".format(local_info_file_prefix))
 	# attack_input_file_prefix = os.path.join(args["local_path"],target_model_name,
 	# 											args["attack_type"])
 	# save bbox attack information
 	out_dir_prefix = os.path.join(args["save_path"], args["attack_method"],target_model_name,
 												args["attack_type"],local_model_folder,str(args["seed"]))
-	os.system("mkdir -p {}".format(out_dir_prefix)) 
+	os.system("mkdir {}".format(out_dir_prefix))
 
 	#### generate the original images and target classes ####
 	target_ys_one_hot,orig_images,target_ys,orig_labels,_, trans_test_images = \
@@ -187,7 +190,7 @@ def main(args):
 			file_path = input_file_prefix)
 	#### end of genarating original images and target classes ####
 
-	# images are generated based on seed (1234), reassign 
+	# images are generated based on seed (1234), reassign
 	# the random to improve reproducibility
 	random.seed(args["seed"])
 	np.random.seed(args["seed"])
@@ -195,11 +198,12 @@ def main(args):
 
 	start_points = np.copy(orig_images) # either start from orig seed or local advs
 	# store attack statistical info
-	dist_record = np.zeros(len(orig_labels),dtype = float)  
-	query_num_vec = np.zeros(len(orig_labels), dtype=int)   
+	dist_record = np.zeros(len(orig_labels),dtype = float)
+	query_num_vec = np.zeros(len(orig_labels), dtype=int)
 	success_vec = np.zeros(len(orig_labels),dtype=bool)
 	adv_classes = np.zeros(len(orig_labels), dtype=int)
-	
+	query_vec = [[] for _ in range(len(orig_labels))] #added
+
 	# local model related variables
 	if simple_target_model:
 		local_model_file_name = "cifar10_simple"
@@ -207,7 +211,7 @@ def main(args):
 		local_model_file_name = "cifar10_robust"
 	else:
 		local_model_file_name = "cifar10"
-	# save_dir = 'model/'+local_model_file_name + '/' 
+	# save_dir = 'model/'+local_model_file_name + '/'
 	callbacks_ls = []
 	attacked_flag = np.zeros(len(orig_labels),dtype = bool)
 
@@ -224,9 +228,9 @@ def main(args):
 				accuracy = loc_model.calcu_acc(x_test,y_test)
 				local_model_ls.append(loc_model)
 				print('Test accuracy of model {}: {:.4f}'.format(model_name,accuracy))
-				sss += 1  
+				sss += 1
 			else:
-				# keras based local normal models 
+				# keras based local normal models
 				if simple_local_model:
 					type_num = normal_local_types[sss]
 				if model_name == 'resnet_v1' or model_name == 'resnet_v2':
@@ -245,13 +249,13 @@ def main(args):
 						load_existing = load_existing, model_name = model_name,loss = args["loss_function"])
 					else:
 						loc_model = cifar10_models_simple(sess,test_batch_size,type_num,use_softmax = True, x = x,y = y,\
-						is_training=is_training,keep_prob=keep_prob,load_existing = load_existing, model_name = model_name, loss = args["loss_function"])                        
+						is_training=is_training,keep_prob=keep_prob,load_existing = load_existing, model_name = model_name, loss = args["loss_function"])
 					local_model_ls.append(loc_model)
 
 					opt = keras.optimizers.SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
 					loc_model.model.compile(loss='categorical_crossentropy',
 											optimizer=opt,
-											metrics=['accuracy'])		
+											metrics=['accuracy'])
 					orig_images_nw = orig_images
 					orig_labels_nw = orig_labels
 					if args["no_save_model"]:
@@ -261,15 +265,15 @@ def main(args):
 								epochs=sub_epochs,
 								verbose=0,
 								validation_data=(x_test, y_test),
-								shuffle = True) 
+								shuffle = True)
 					else:
 						print("Saving local model is yet to be implemented, please check back later, system exiting!")
 						sys.exit(0)
 						# TODO: fix the issue of loading pretrained model first and then finetune the model
 						# if load_existing:
-						# 	filepath = save_dir + model_load_name + '_pretrained.h5' 
+						# 	filepath = save_dir + model_load_name + '_pretrained.h5'
 						# else:
-						# 	filepath = save_dir + model_load_name + '.h5' 
+						# 	filepath = save_dir + model_load_name + '.h5'
 						# checkpoint = ModelCheckpoint(filepath=filepath,
 						# 							monitor='val_acc',
 						# 							verbose=0,
@@ -284,16 +288,16 @@ def main(args):
 						# 		verbose=0,
 						# 		validation_data=(x_test, y_test),
 						# 		shuffle = True,
-						# 		callbacks = callbacks)  
+						# 		callbacks = callbacks)
 					scores = loc_model.model.evaluate(x_test, y_test, verbose=0)
 					accuracy = scores[1]
 					print('Test accuracy of model {}: {:.4f}'.format(model_load_name,accuracy))
-					sss += 1  
+					sss += 1
 		##################### end of loading local models ######################################
 
 		##################### Define Attack Graphs of local PGD attack ###############################
 		local_attack_graph = LinfPGDAttack(local_model_ls,
-							epsilon = li_eps, 
+							epsilon = li_eps,
 							k = k,
 							a = a,
 							random_start = True,
@@ -310,7 +314,7 @@ def main(args):
 		##################### generate local adversarial examples and also store the local attack information #####################
 		if not args["load_local_AEs"]:
 			# first do the transfer check to obtain local adversarial samples
-			# generated local info can be used for batch attacks, 
+			# generated local info can be used for batch attacks,
 			# max_loss, min_loss, max_gap, min_gap etc are other metrics we explored for scheduling seeds based on local information
 			if is_targeted:
 				all_trans_rate, pred_labs, local_aes,pgd_cnt_mat, max_loss, min_loss, ave_loss, max_gap, min_gap, ave_gap\
@@ -329,7 +333,7 @@ def main(args):
 			else:
 				adv_img_loss, free_idx = compute_cw_loss(sess,target_model,local_aes,\
 				orig_labels,targeted=is_targeted,load_robust=load_robust)
-			
+
 			# calculate orig img loss for scheduling seeds in baseline attack
 			if is_targeted:
 				orig_img_loss, free_idx = compute_cw_loss(sess,target_model,orig_images,\
@@ -337,7 +341,7 @@ def main(args):
 			else:
 				orig_img_loss, free_idx = compute_cw_loss(sess,target_model,orig_images,\
 				orig_labels,targeted=is_targeted,load_robust=load_robust)
-		
+
 			pred_labs = np.argmax(target_model.predict_prob(local_aes),axis=1)
 			if is_targeted:
 				transfer_flag = np.argmax(target_ys_one_hot, axis=1) == pred_labs
@@ -364,7 +368,7 @@ def main(args):
 
 		if not is_targeted:
 			all_trans_rate = 1 - all_trans_rate
-		print('** Transfer Rate: **' + str(all_trans_rate))  
+		print('** Transfer Rate: **' + str(all_trans_rate))
 		if not args["force_tune_baseline"]:
 			if all_trans_rate > use_loc_adv_thres:
 				print("Updated the starting points to local AEs....")
@@ -383,7 +387,7 @@ def main(args):
 		query_num_vec[np.logical_not(attacked_flag)] += 1
 		if not is_targeted:
 			ind_all_trans_rate = 1 - ind_all_trans_rate
-		print('** (Independent Set) Transfer Rate: **' + str(ind_all_trans_rate))   
+		print('** (Independent Set) Transfer Rate: **' + str(ind_all_trans_rate))
 		all_trans_rate_ls.append(ind_all_trans_rate)
 		if args["test_trans_rate_only"]:
 			print("Program terminates after checking the transfer rate!")
@@ -401,7 +405,7 @@ def main(args):
 	per_cls_cnt = 0
 	cls_order = 0
 	change_limit = False
-	max_lim_num = int(fine_tune_freq/class_num) 
+	max_lim_num = int(fine_tune_freq/class_num)
 
 	# define the autozoom bbox attack graph
 	if args["attack_method"] == "autozoom":
@@ -430,7 +434,7 @@ def main(args):
 		# define black-box model graph of autozoom
 		autozoom_graph = AutoZOOM(sess, target_model, args, decoder, codec,
 				num_channels,image_size,class_num)
-				
+
 	# main loop of hybrid attacks
 	for itr in range(len(orig_labels)):
 		print("#------------ Substitue training round {} ----------------#".format(itr))
@@ -449,7 +453,7 @@ def main(args):
 		if with_local:
 			if len(free_idx)>0:
 				# free attacks are found
-				attacked_flag[free_idx] = 1 
+				attacked_flag[free_idx] = 1
 				success_vec[free_idx] = 1
 				# update dist and adv class
 				if args['dist_metric'] == 'l2':
@@ -459,15 +463,15 @@ def main(args):
 				# print(start_points[free_idx].shape)
 				adv_class = target_model.pred_class(start_points[free_idx])
 				adv_classes[free_idx]= adv_class
-				dist_record[free_idx] = dist 
+				dist_record[free_idx] = dist
 				if np.amax(dist) >= args["cost_threshold"] + args["cost_threshold"]/10:
 					print("there are some problems in setting the perturbation distance!")
 					sys.exit(0)
 		print("Number of Unattacked Seeds: ",np.sum(np.logical_not(attacked_flag)))
-		if attacked_flag.all():
+		if itr == 1:
 			# early stop when all seeds are sucessfully attacked
 			break
-		
+
 		# define the seed generation process as a functon
 		if args["sort_metric"] == "min":
 			img_loss[attacked_flag] = 1e10
@@ -476,7 +480,6 @@ def main(args):
 		candi_idx, per_cls_cnt, cls_order,change_limit,max_lim_num = select_next_seed(img_loss,attacked_flag,args["sort_metric"],\
 		args["by_class"],fine_tune_freq,class_num,per_cls_cnt,cls_order,change_limit,max_lim_num)
 
-		print(candi_idx)
 		candi_idx_ls.append(candi_idx)
 
 		input_img = start_points[candi_idx:candi_idx+1]
@@ -494,18 +497,18 @@ def main(args):
 
 		################## BEGIN: bbox attacks ############################
 		if args["attack_method"] == "autozoom":
-			# perform bbox attacks 
+			# perform bbox attacks
 			if is_targeted:
 				x_s, ae, query_num = autozoom_attack(autozoom_graph,input_img,orig_images[candi_idx:candi_idx+1],target_ys_one_hot[candi_idx])
 			else:
 				x_s, ae, query_num = autozoom_attack(autozoom_graph,input_img,orig_images[candi_idx:candi_idx+1],orig_labels[candi_idx])
 		else:
 			if is_targeted:
-				x_s, query_num, ae = nes_attack(args,target_model,input_img,orig_images[candi_idx:candi_idx+1],\
-					np.argmax(target_ys_one_hot[candi_idx]), lower = clip_min, upper = clip_max)
+				x_s, query_num, ae,q = nes_attack(args,target_model,input_img,orig_images[candi_idx:candi_idx+1],\
+					np.argmax(target_ys_one_hot[candi_idx]), lower = clip_min, upper = clip_max)#added
 			else:
-				x_s, query_num, ae = nes_attack(args,target_model,input_img,orig_images[candi_idx:candi_idx+1],\
-					np.argmax(orig_labels[candi_idx]), lower = clip_min, upper = clip_max)
+				x_s, query_num, ae,q = nes_attack(args,target_model,input_img,orig_images[candi_idx:candi_idx+1],\
+					np.argmax(orig_labels[candi_idx]), lower = clip_min, upper = clip_max)#added
 			x_s = np.squeeze(np.array(x_s),axis = 1)
 		################## END: bbox attacks ############################
 
@@ -520,24 +523,25 @@ def main(args):
 			dist = np.amax(np.abs(ae-orig_images[candi_idx]))
 		adv_class = target_model.pred_class(ae)
 		adv_classes[candi_idx] = adv_class
-		dist_record[candi_idx] = dist 
+		dist_record[candi_idx] = dist
 
 		if args["attack_method"] == "autozoom":
 			# autozoom utilizes the query info of attack input, which is already done at the begining.
-			added_query =  query_num - 1 
+			added_query =  query_num - 1
 		else:
 			added_query = query_num
 
-		query_num_vec[candi_idx] += added_query 
+		query_num_vec[candi_idx] += added_query
+		query_vec[candi_idx] = q #added
+		"""
 		if dist >= args["cost_threshold"] + args["cost_threshold"]/10:
 			print("the distance is not optimized properly")
 			sys.exit(0)
+		"""
 
 		if is_targeted:
 			if adv_class == np.argmax(target_ys_one_hot[candi_idx]):
 				success_vec[candi_idx] = 1
-				np.save('data_numpy_image.npy',ae)
-				sys.exit(0)
 		else:
 			if adv_class != np.argmax(orig_labels[candi_idx]):
 				success_vec[candi_idx] = 1
@@ -552,14 +556,14 @@ def main(args):
 				# augment the local model training data with target model labels
 				print(np.array(x_s).shape)
 				print(S.shape)
-				S = np.concatenate((S, np.array(x_s)), axis=0)        
+				S = np.concatenate((S, np.array(x_s)), axis=0)
 				S_label_add = target_model.predict_prob(np.array(x_s))
 				S_label_add_cate = np.argmax(S_label_add,axis = 1)
 				S_label_add_cate = np_utils.to_categorical(S_label_add_cate, class_num)
 				S_label_cate = np.concatenate((S_label_cate, S_label_add_cate), axis=0)
 				# empirically, tuning with model prediction probabilities given slightly better results.
 				# if your bbox attack is decision based, only use the prediction labels
-				S_label = np.concatenate((S_label, S_label_add), axis=0)            
+				S_label = np.concatenate((S_label, S_label_add), axis=0)
 				# fine-tune the model
 				if itr % fine_tune_freq == 0 and itr != 0:
 					if len(S_label) > args["train_inst_lim"]:
@@ -567,10 +571,10 @@ def main(args):
 						rand_idx = np.random.choice(len(S_label),args["train_inst_lim"],replace = False)
 						S = S[rand_idx]
 						S_label = S_label[rand_idx]
-						S_label_cate = S_label_cate[rand_idx]  
-						print("current num: %d, max train instance limit %d is reached, performed random sampling to get %d samples!" % (curr_len,len(S_label),len(rand_idx))) 
+						S_label_cate = S_label_cate[rand_idx]
+						print("current num: %d, max train instance limit %d is reached, performed random sampling to get %d samples!" % (curr_len,len(S_label),len(rand_idx)))
 					sss = 0
-					
+
 					for loc_model in local_model_ls:
 						model_name = local_model_names_all[sss]
 						if args["use_mixup"]:
@@ -588,7 +592,7 @@ def main(args):
 							epochs=sub_epochs,
 							verbose=0,
 							validation_data=(x_test, y_test),
-							shuffle = True)  
+							shuffle = True)
 						else:
 							print("Saving local model is yet to be implemented, please check back later, system exiting!")
 							sys.exit(0)
@@ -599,7 +603,7 @@ def main(args):
 							# 	verbose=0,
 							# 	validation_data=(x_test, y_test),
 							# 	shuffle = True,
-							# 	callbacks = callbacks)    
+							# 	callbacks = callbacks)
 						scores = loc_model.model.evaluate(x_test, y_test, verbose=0)
 						print('Test accuracy of model {}: {:.4f}'.format(model_name,scores[1]))
 						sss += 1
@@ -635,12 +639,12 @@ def main(args):
 						if not is_targeted:
 							all_trans_rate = 1 - all_trans_rate
 						print('<<Overall Transfer Rate>>: **' + str(all_trans_rate))
-						
-						# if trans rate is not high enough, still start from orig seed; start from loc adv only 
+
+						# if trans rate is not high enough, still start from orig seed; start from loc adv only
 						# when trans rate is high enough, useful when you start with random model
 						if not args["force_tune_baseline"]:
 							if not use_loc_adv_flag:
-								if remain_trans_rate > use_loc_adv_thres: 
+								if remain_trans_rate > use_loc_adv_thres:
 									use_loc_adv_flag = True
 									print("Updated the starting points....")
 									start_points[np.logical_not(attacked_flag)] = remain_local_aes
@@ -661,10 +665,16 @@ def main(args):
 
 	# save the query information of all classes
 	if not args["no_save_text"]:
-		save_name_file = os.path.join(out_dir_prefix,"{}_num_queries.txt".format(loc_adv))
+		save_name_file = os.path.join(out_dir_prefix,"{}_num_queries.txt".format(str(args["query_index"])+"_"+loc_adv))
 		np.savetxt(save_name_file, query_num_vec,fmt='%d',delimiter=' ')
-		save_name_file = os.path.join(out_dir_prefix,"{}_success_flags.txt".format(loc_adv))
+		save_name_file = os.path.join(out_dir_prefix,"{}_success_flags.txt".format(str(args["query_index"])+"_"+loc_adv))
 		np.savetxt(save_name_file, success_vec,fmt='%d',delimiter=' ')
+		for i in range(len(query_vec)):
+			save_name_file = os.path.join(out_dir_prefix,"{}_queries_".format(str(args["query_index"])+"_"+loc_adv)+str(i))#added
+			np.save(save_name_file, query_vec[i])
+			print(save_name_file)
+			#print(query_vec[i].shape)
+		#np.savetxt(save_name_file, query_vec,fmt='%d',delimiter=' ')
 
 
 if __name__ == "__main__":
@@ -685,9 +695,9 @@ if __name__ == "__main__":
 	parser.add_argument("--load_existing",action = "store_true",help = "start from an already well trained models")
 	parser.add_argument("--load_imgs",action = "store_true",help = "directly load original images generated")
 	parser.add_argument("--load_local_AEs",action = "store_true",help = "load local adversarial examples")
-	parser.add_argument("--use_loc_adv_thres", type = float, default = 0.0, help = "transfer rate threshold where targeted attack is more reliable...")  
-	parser.add_argument("--fine_tune_freq", type = int, default = 100, help = "frequency to check the transfer rates")  
-	parser.add_argument("--nb_epochs_sub", type = int, default = 50, help = "number of epcosh to train models") 
+	parser.add_argument("--use_loc_adv_thres", type = float, default = 0.0, help = "transfer rate threshold where targeted attack is more reliable...")
+	parser.add_argument("--fine_tune_freq", type = int, default = 100, help = "frequency to check the transfer rates")
+	parser.add_argument("--nb_epochs_sub", type = int, default = 50, help = "number of epcosh to train models")
 	parser.add_argument("--no_tune_local",action = "store_true",help = "load the pretrained model without any interactions")
 	parser.add_argument("--sort_metric",default="random", choices=["max", "min","random"], help="the instance selection criteria of zoo attacks (sorted order of loss function)")
 	parser.add_argument("--by_class",action = "store_true",help = "generate instances from each classes")
@@ -702,7 +712,7 @@ if __name__ == "__main__":
 	parser.add_argument("--loss_function", default="cw", choices=["xent", "cw"], help="loss function for attacking local models")
 	parser.add_argument("--force_tune_baseline", action='store_true',help="local models are still tuned even running baseline attack")
 	parser.add_argument("--test_trans_rate_only", action='store_true',help="just check the transfer rate, terminate after that")
-	
+
 	## autozoom parameters ##
 	parser.add_argument("-b", "--batch_size", type=int, default=1, help="the batch size for zoo, zoo_ae attack")
 	parser.add_argument("-c", "--init_const", type=float, default=1, help="the initial setting of the constant lambda")
@@ -711,7 +721,7 @@ if __name__ == "__main__":
 	parser.add_argument("--confidence", default=0, type=float, help="the attack confidence")
 	parser.add_argument("--codec_prefix", default=None, help="the coedec prefix, load the default codec is not set")
 	parser.add_argument("--num_rand_vec", type=int, default=1, help="the number of random vector for post success iteration")
-	parser.add_argument("--seed", type=int, default=1234, help="random seed")
+	parser.add_argument("--seed", type=int, default=123, help="random seed")
 	parser.add_argument("--img_offset", type=int, default=0, help="the offset of the image index when getting attack data")
 	parser.add_argument("--img_resize", default=None, type=int, help = "this option only works for ATTACK METHOD zoo and zoo_rv")
 	parser.add_argument("--switch_iterations", type=int, default=1000, help="the iteration number for dynamic switching")
@@ -719,18 +729,18 @@ if __name__ == "__main__":
 	## parameters used for nes attack ##
 	parser.add_argument('--samples_per_draw', type=int, default=50)
 	parser.add_argument('--nes_batch_size', type=int, default=50)
-	parser.add_argument('--sigma', type=float, default=1e-3)
+	parser.add_argument('--sigma', type=float, default=1)
 	parser.add_argument('--nes_learning_rate', type=float, default=0.01)
 	parser.add_argument('--momentum', type=float, default=0.9)
-	parser.add_argument('--max_queries', type=int, default=4000)
-	parser.add_argument('--plateau-drop', type=float, default=2.0) 
+	parser.add_argument('--max_queries', type=int, default=100000)
+	parser.add_argument('--plateau-drop', type=float, default=2.0)
 	parser.add_argument('--min_lr_ratio', type=int, default=200)
 	parser.add_argument('--plateau_length', type=int, default=5)
 	parser.add_argument('--max_lr', type=float, default=1e-2)
 	parser.add_argument('--min_lr', type=float, default=5e-5)
+	parser.add_argument("--query_index","-q_i", type =int, default=1)
 
 	args = vars(parser.parse_args())
-
 	# settings based on dataset and attack method
 	if args["max_iterations"] == 0:
 		args["max_iterations"] = 2000
@@ -758,4 +768,3 @@ if __name__ == "__main__":
 	tf.set_random_seed(args["seed"])
 	print(args)
 	main(args)
-

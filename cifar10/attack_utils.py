@@ -1,12 +1,14 @@
 import numpy as np
 import time
+from keras.models import load_model
+
 IMAGE_SIZE = (32,32,3)
 
 def autozoom_attack(attack_graph,input_img,orig_img, label):
 	"""run the autozoom style attacks on selected adversarial samples and record intermediate results
 	:param: data: the image to be attacked
 	param: label: the target or original label
-	:return: 
+	:return:
 	# x_s: intermediate results of the attack
 	# ae, adversarial example
 	# query_num: number of queries taken to attack the given seed
@@ -14,12 +16,12 @@ def autozoom_attack(attack_graph,input_img,orig_img, label):
 	ae, query_num,x_s = attack_graph.attack(input_img, label, orig_img)
 	return x_s, ae, query_num
 
-
 def nes_attack(args,model,attack_seed,initial_img,target_class, class_num = 10, lower = -0.5, upper = 0.5):
+	queryblinding_ae = load_model('CIFAR10_models/queryblinding_models/saved_autoencoder_qb')
 	plot_ite = args["print_every"]
 	max_lr = args["max_lr"]
 	max_iters = int(np.ceil(args["max_queries"] // args["samples_per_draw"]))
-	if args["attack_type"] == "targeted": 
+	if args["attack_type"] == "targeted":
 		is_targeted = 1
 	else:
 		is_targeted  = -1
@@ -31,6 +33,8 @@ def nes_attack(args,model,attack_seed,initial_img,target_class, class_num = 10, 
 	print('predicted class %d' % model.pred_class(initial_img))
 	# HISTORY VARIABLES (for backtracking and momentum)
 	num_queries = 0
+	q_flag = True#added
+	queries = None#added
 	g = 0
 
 	# adv = np.expand_dims(adv, axis=0) # wrap(unsqueeze) image to ensure 4-D np.array
@@ -39,7 +43,7 @@ def nes_attack(args,model,attack_seed,initial_img,target_class, class_num = 10, 
 	prev_adv = adv
 	last_ls = []
 	x_s = []
-	# BEGIN ATTACK 
+	# BEGIN ATTACK
 	# MAIN LOOP
 	for i in range(max_iters):
 		# record the intermediate attack results
@@ -48,8 +52,8 @@ def nes_attack(args,model,attack_seed,initial_img,target_class, class_num = 10, 
 		start = time.time()
 		# GET GRADIENT
 		prev_g = g
-		l, g = get_grad_np(args, model, adv, target_class, args["samples_per_draw"], args["nes_batch_size"], \
-			class_num,upper = upper,lower = lower)
+		l, g, new_queries = get_grad_np(args, model, adv, target_class, args["samples_per_draw"], args["nes_batch_size"], \
+			class_num,upper = upper,lower = lower, queryblinding_ae=queryblinding_ae)#added
 		# print(l, g.shape)
 		# SIMPLE MOMENTUM
 		g = args["momentum"] * prev_g + (1.0 - args["momentum"]) * g
@@ -78,31 +82,39 @@ def nes_attack(args,model,attack_seed,initial_img,target_class, class_num = 10, 
 		proposed_adv = np.clip(proposed_adv, lower, upper)
 		prev_adv = adv
 		adv = proposed_adv
+
 		# BOOK-KEEPING STUFF
 		num_queries += args["samples_per_draw"]
+		if q_flag: #added
+			q_flag = False
+			queries = new_queries
+		else:
+			queries = np.concatenate((queries, new_queries), axis = 0)
 		predicted_class = model.pred_class(adv)
 		if (i+1) % plot_ite == 0:
 			log_text = 'Step %05d: number of query %d, loss %.8f, lr %.2E, predicted class %d target_class %d (time %.4f)' % (i, num_queries, l, \
 				current_lr, predicted_class, target_class, time.time() - start)
-			print(log_text)    
-	return x_s, num_queries, adv
+			print(log_text)
+	return x_s, num_queries, adv,queries#added
 
-def get_grad_np(args,model, adv, tc, spd, bs, class_num,upper,lower):
+def get_grad_np(args,model, adv, tc, spd, bs, class_num,upper,lower,queryblinding_ae):
     """ used for estimating gradients for NES, reimplemented in numpy
     """
     num_batches = spd // bs
     losses_val = []
     grads_val = []
+    eval_points = []#added
     for _ in range(num_batches):
-        tc = np.repeat(tc, bs) 
+        tc = np.repeat(tc, bs)
         noise_pos = np.random.normal(size=(bs//2,) + IMAGE_SIZE)
         noise = np.concatenate([noise_pos, -noise_pos], axis=0)
         eval_points = adv + args["sigma"] * noise * (upper-lower) # for scale
+        eval_points = queryblinding_ae.predict(eval_points)
         loss_val = model.get_loss(eval_points, tc,class_num)
         losses_tiled = np.tile(np.reshape(loss_val, (-1, 1)), np.prod(IMAGE_SIZE))
         losses_tiled = np.reshape(losses_tiled, (bs,)+IMAGE_SIZE)
         grad_val = np.mean(losses_tiled * noise, axis=0)/args["sigma"]
         losses_val.append(loss_val)
         grads_val.append(grad_val)
-    return np.array(losses_val).mean(), np.mean(np.array(grads_val), axis=0)
+    return np.array(losses_val).mean(), np.mean(np.array(grads_val), axis=0),eval_points#added
 
